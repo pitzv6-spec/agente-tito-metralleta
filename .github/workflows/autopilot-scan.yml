@@ -18,6 +18,13 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
+      - name: Debug (largo de los secrets, no revela el valor)
+        run: |
+          printf 'TITO_DEPLOY_URL: %d caracteres -> %s\n' "${#TITO_DEPLOY_URL}" "$TITO_DEPLOY_URL"
+          printf 'CRON_SECRET: %d caracteres\n' "${#CRON_SECRET}"
+        env:
+          TITO_DEPLOY_URL: ${{ secrets.TITO_DEPLOY_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
       - name: POST /api/autopilot/scan
         run: |
           curl -sS -X POST "${TITO_DEPLOY_URL}/api/autopilot/scan" \
