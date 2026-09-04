@@ -134,10 +134,14 @@ export async function POST(request: Request) {
         // ya filtrados no-null al armar byTicker (sin contrato concreto no entra al mapa)
         strike: r.strike!,
         expiration: r.expiration!,
+        dte: daysToExpiration(r.expiration!, now),
+        iv: r.iv,
         assetPrice: r.assetPrice,
         price: r.price,
         hitRate: report.hitRate.value,
         resolved: report.hitRate.resolved,
+        avgMfePct: report.avgMfe,
+        avgMaePct: report.avgMae,
       });
       if (cand) swingCandidates.push(cand);
     }
@@ -188,8 +192,10 @@ export async function POST(request: Request) {
       return evaluateIntraday({
         ticker,
         spot: chain.spot,
+        iv: gex.iv,
         gexDirection: gex.direction,
         gexConfidence: gex.confidence,
+        kingStrike: gex.kingStrike,
         lowLiquidity: gex.lowLiquidity,
         keySupport: levels.keySupport ? { price: levels.keySupport.price, strength: levels.keySupport.strength } : null,
         keyResistance: levels.keyResistance
@@ -216,7 +222,20 @@ export async function POST(request: Request) {
     await upsertTrade(trade);
     created.push(trade);
     const alert = createAlert(
-      { ticker: c.ticker, path: c.path, direction: c.direction, probability: Math.round(c.probability), reasoning: c.reasoning, tradeId: trade.id },
+      {
+        ticker: c.ticker,
+        path: c.path,
+        direction: c.direction,
+        contractType: c.contractType,
+        strike: c.strike,
+        expiration: c.expiration,
+        entryTrigger: c.entryTrigger,
+        target: c.target,
+        stop: c.stop,
+        probability: Math.round(c.probability),
+        reasoning: c.reasoning,
+        tradeId: trade.id,
+      },
       now,
     );
     await appendAlert(alert);

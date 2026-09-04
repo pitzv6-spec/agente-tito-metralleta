@@ -8,6 +8,12 @@ function alert(overrides: Partial<Alert> = {}): Alert {
     ticker: "TSLA",
     path: "intraday",
     direction: "up",
+    contractType: "call",
+    strike: 330,
+    expiration: "2026-09-18",
+    entryTrigger: 330,
+    target: 5.4,
+    stop: 2.1,
     probability: 78,
     reasoning: "GEX confianza 78% + ruptura de resistencia en $330.00 (fuerza 60).",
     tradeId: "tr_1",
@@ -36,6 +42,17 @@ describe("buildDiscordPayload", () => {
     const payload = buildDiscordPayload(alert());
     const embed = (payload.embeds as Record<string, unknown>[])[0];
     expect((embed.footer as { text: string }).text).toMatch(/SIMULACIÓN/i);
+  });
+
+  it("incluye gatillo, objetivo y stop reales del trade — nada inventado", () => {
+    const payload = buildDiscordPayload(alert({ entryTrigger: 331.5, target: 5.4, stop: 2.1 }));
+    const embed = (payload.embeds as Record<string, unknown>[])[0];
+    const fields = embed.fields as { name: string; value: string }[];
+    const byName = Object.fromEntries(fields.map((f) => [f.name, f.value]));
+    expect(byName["Gatillo (subyacente)"]).toBe("$331.50");
+    expect(byName["Compra (objetivo, prima)"]).toBe("$5.40");
+    expect(byName["Stop loss (prima)"]).toBe("$2.10");
+    expect(embed.title).toContain("$330.00C");
   });
 });
 

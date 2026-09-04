@@ -35,6 +35,28 @@ function maxPages(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 40;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Reintentos SOLO para 429 (límite de tasa) — es lo único que se arregla solo
+ * con esperar; 401/403/404 van a fallar igual la próxima vez. Backoff corto:
+ * la mayoría de estos límites de Massive se liberan en 1-2 segundos.
+ */
+const RATE_LIMIT_RETRIES = 2;
+const RATE_LIMIT_DELAYS_MS = [800, 1600];
+
+/** Fetch con reintento de 429 — comparten esta parte fetchOptionChain, fetchNearChain y getJson. */
+async function fetchWithRateLimitRetry(url: string, key: string): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, cache: "no-store" });
+    if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+      await sleep(RATE_LIMIT_DELAYS_MS[attempt]);
+      continue;
+    }
+    return res;
+  }
+}
+
 export interface FetchProgress {
   /** Se llama al terminar cada página, con el número de página y el total acumulado. */
   onPage?: (page: number, accumulated: number) => void | Promise<void>;
@@ -69,10 +91,7 @@ export async function fetchOptionChain(
 
   while (url) {
     page += 1;
-    const res: Response = await fetch(url, {
-      headers: { Authorization: `Bearer ${key}` },
-      cache: "no-store",
-    });
+    const res: Response = await fetchWithRateLimitRetry(url, key);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -129,10 +148,7 @@ interface StockSnapshot {
 
 async function getJson<T>(path: string): Promise<T | null> {
   const key = apiKey();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${key}` },
-    cache: "no-store",
-  });
+  const res = await fetchWithRateLimitRetry(`${BASE_URL}${path}`, key);
   if (res.status === 404) return null;
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -200,7 +216,13 @@ export async function fetchDailyBars(ticker: string, days = 365): Promise<DailyB
     `/v2/aggs/ticker/${encodeURIComponent(clean)}/range/1/day/` +
     `${toDateStr(from.getTime())}/${toDateStr(to.getTime())}` +
     `?adjusted=true&sort=asc&limit=500`;
-  const json = await getJson<{ results?: AggBar[] }>(path).catch(() => null);
+  // Sin .catch acá a propósito: swallowear el error da un array vacío "exitoso"
+  // indistinguible de "no hay barras", y GEX/niveles/predicción se quedan mudos
+  // para siempre sin ningún aviso (bug real, visto con Massive fallando en
+  // silencio bajo carga). Cada caller decide cómo manejar el fallo — la mayoría
+  // encadena su propio `.catch(() => [])`; `/api/history` lo deja propagar para
+  // devolver un 502 real en vez de fingir que no hay datos.
+  const json = await getJson<{ results?: AggBar[] }>(path);
   const bars = json?.results ?? [];
   return bars.map((b) => ({
     time: toDateStr(b.t),
@@ -225,7 +247,10 @@ export async function fetchBars(
     `/v2/aggs/ticker/${encodeURIComponent(clean)}/range/${multiplier}/${timespan}/` +
     `${toDateStr(from.getTime())}/${toDateStr(to.getTime())}` +
     `?adjusted=true&sort=asc&limit=50000`;
-  const json = await getJson<{ results?: AggBar[] }>(path).catch(() => null);
+  // Mismo motivo que fetchDailyBars: no swallowear el error acá — /api/bars ya
+  // lo convierte en un 502 real en vez de un array vacío indistinguible de
+  // "no hay datos".
+  const json = await getJson<{ results?: AggBar[] }>(path);
   const bars = json?.results ?? [];
   return bars.map((b) => ({
     time: Math.floor(b.t / 1000),
@@ -377,10 +402,7 @@ export async function fetchNearChain(
 
   while (url) {
     page += 1;
-    const res: Response = await fetch(url, {
-      headers: { Authorization: `Bearer ${key}` },
-      cache: "no-store",
-    });
+    const res: Response = await fetchWithRateLimitRetry(url, key);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new MassiveError(describeStatus(res.status, clean, body), res.status);

@@ -2,13 +2,21 @@
 // AUTO que el piloto ya creó en Mis Trades; esto es el feed de "qué hizo y por qué".
 
 import type { AutoPath } from "./autopilot";
-import type { Direction } from "./paperTrades";
+import type { ContractType, Direction } from "./paperTrades";
 
 export interface Alert {
   id: string;
   ticker: string;
   path: AutoPath;
   direction: Direction;
+  contractType: ContractType;
+  strike: number;
+  expiration: string;
+  /** Nivel real del SUBYACENTE que activa el trade. */
+  entryTrigger: number;
+  /** Precio de OPCIÓN objetivo/stop, ya proyectado con datos reales (ver autopilot.ts). */
+  target: number;
+  stop: number;
   probability: number;
   reasoning: string;
   tradeId: string;

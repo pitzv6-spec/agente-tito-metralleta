@@ -84,6 +84,7 @@ export default function Dashboard() {
 
   const [chainErr, setChainErr] = useState<string | null>(null);
   const [flowErr, setFlowErr] = useState<string | null>(null);
+  const [barsErr, setBarsErr] = useState<string | null>(null);
   const [showChain, setShowChain] = useState(false);
   const [horizonDays, setHorizonDays] = useState(20);
   const [view, setView] = useState<"estudiante" | "pro">("estudiante");
@@ -259,7 +260,7 @@ export default function Dashboard() {
     setAggScore(null); setConviction(null); setConvRows(null); setConvMeta(null);
     setUnusuality(null); setUnusualRows(null); setIvContext(null); setValidation(null);
     setNotable(null); setFlowMeta(null);
-    setChainErr(null); setFlowErr(null);
+    setChainErr(null); setFlowErr(null); setBarsErr(null);
     chainDoneRef.current = false; flowDoneRef.current = false;
     setShowChain(false);
     setCalib({ biasPct: null, samples: 0 }); setCalibReady(false); savedRef.current = null;
@@ -292,8 +293,18 @@ export default function Dashboard() {
         setChainHistory(d.history ?? []);
         chainDoneRef.current = true; finish(); c.close();
         fetch(`/api/history?ticker=${encodeURIComponent(d.meta.ticker)}`)
-          .then((r) => r.json()).then((h) => setBars(Array.isArray(h.bars) ? h.bars : []))
-          .catch(() => setBars([]));
+          .then(async (r) => {
+            const h = await r.json();
+            // Si Massive falla acá (rate limit, blip), NO hay que fingir que "sin barras"
+            // es un resultado válido: sin barras, GEX/Predicción se quedan mudos para
+            // siempre sin ningún aviso. Se muestra el motivo y se deja `bars` en null
+            // para no confundir "vacío legítimo" con "falló la carga".
+            if (!r.ok) throw new Error(h?.error ?? `Massive respondió ${r.status}.`);
+            setBars(Array.isArray(h.bars) ? h.bars : []);
+          })
+          .catch((err) => {
+            setBarsErr(err instanceof Error ? err.message : "No se pudo cargar el histórico diario.");
+          });
       } else if (d.type === "error") { setChainErr(d.message); chainDoneRef.current = true; finish(); c.close(); }
     };
     c.onerror = () => { chainDoneRef.current = true; finish(); c.close(); };
@@ -349,6 +360,12 @@ export default function Dashboard() {
 
         {chainErr && <div className="error">⚠ Option chain: {chainErr}</div>}
         {flowErr && <div className="error">⚠ Flujo: {flowErr}</div>}
+        {barsErr && (
+          <div className="error">
+            ⚠ Histórico diario: {barsErr} — GEX, niveles y Prediction Pro necesitan estas barras y
+            se quedan sin calcular hasta que vuelvas a buscar el ticker.
+          </div>
+        )}
 
         {started && ticker && (
           <>

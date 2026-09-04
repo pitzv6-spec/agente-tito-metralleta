@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { bsPrice } from "./blackScholes";
 import {
-  AUTO_STOP_MULT,
-  AUTO_TARGET_MULT,
-  AUTO_TRAILING_PCT,
   MIN_INTRADAY_CONFIDENCE,
   MIN_SWING_HITRATE,
   buildAutoTradeInput,
@@ -50,26 +48,36 @@ describe("evaluateIntraday", () => {
   const base = {
     ticker: "WULF",
     spot: 20,
+    iv: 0.6,
     gexDirection: "up" as const,
     gexConfidence: 70,
+    kingStrike: 25,
     lowLiquidity: false,
     keySupport: { price: 18, strength: 40 },
     keyResistance: { price: 22, strength: 50 },
-    contracts: [contract({ strike: 22 })],
+    contracts: [contract({ strike: 22, dte: 20 })],
   };
 
-  it("call en ruptura de resistencia cuando GEX apunta arriba con confianza suficiente", () => {
+  it("call en ruptura de resistencia, con objetivo/stop calculados vía Black-Scholes sobre niveles reales", () => {
     const cand = evaluateIntraday(base);
     expect(cand?.contractType).toBe("call");
     expect(cand?.direction).toBe("up");
     expect(cand?.entryTrigger).toBe(22);
     expect(cand?.probability).toBe(70);
+
+    const T = 20 / 365;
+    const expectedTarget = Math.round(bsPrice(25, 22, T, 0.6, "call") * 100) / 100;
+    const expectedStop = Math.round(bsPrice(18, 22, T, 0.6, "call") * 100) / 100;
+    expect(cand?.target).toBeCloseTo(expectedTarget);
+    expect(cand?.stop).toBeCloseTo(expectedStop);
+    expect(cand!.target).toBeGreaterThan(cand!.stop);
   });
 
-  it("put en ruptura de soporte cuando GEX apunta abajo", () => {
-    const cand = evaluateIntraday({ ...base, gexDirection: "down" });
+  it("put en ruptura de soporte cuando GEX apunta abajo, con kingStrike por debajo", () => {
+    const cand = evaluateIntraday({ ...base, gexDirection: "down", kingStrike: 15 });
     expect(cand?.contractType).toBe("put");
     expect(cand?.entryTrigger).toBe(18);
+    expect(cand!.target).toBeGreaterThan(cand!.stop);
   });
 
   it("no entra por debajo del umbral de confianza", () => {
@@ -80,12 +88,21 @@ describe("evaluateIntraday", () => {
     expect(evaluateIntraday({ ...base, lowLiquidity: true })).toBeNull();
   });
 
-  it("no entra si no hay nivel real que sostenga la dirección", () => {
+  it("no entra sin nodo GEX (sin objetivo real que proyectar)", () => {
+    expect(evaluateIntraday({ ...base, kingStrike: null })).toBeNull();
+  });
+
+  it("no entra si falta CUALQUIERA de los dos niveles reales (gatillo o stop)", () => {
     expect(evaluateIntraday({ ...base, keyResistance: null })).toBeNull();
+    expect(evaluateIntraday({ ...base, keySupport: null })).toBeNull();
   });
 
   it("no entra sin contrato con precio disponible", () => {
     expect(evaluateIntraday({ ...base, contracts: [] })).toBeNull();
+  });
+
+  it("no entra sin IV válida", () => {
+    expect(evaluateIntraday({ ...base, iv: 0 })).toBeNull();
   });
 });
 
@@ -95,22 +112,33 @@ describe("evaluateSwing", () => {
     type: "call" as const,
     strike: 250,
     expiration: "2026-10-16",
+    dte: 25,
+    iv: 0.5,
     assetPrice: 240,
     price: 3.5,
     hitRate: 70,
     resolved: 8,
+    avgMfePct: 6,
+    avgMaePct: 3,
   };
 
   it("entra cuando hay acierto histórico suficiente, gatillo por encima del spot para calls", () => {
     const cand = evaluateSwing(base);
     expect(cand?.direction).toBe("up");
     expect(cand?.entryTrigger).toBeCloseTo(240 * 1.003);
+
+    const T = 25 / 365;
+    const expectedTarget = Math.round(bsPrice(240 * 1.06, 250, T, 0.5, "call") * 100) / 100;
+    const expectedStop = Math.round(bsPrice(240 * 0.97, 250, T, 0.5, "call") * 100) / 100;
+    expect(cand?.target).toBeCloseTo(expectedTarget);
+    expect(cand?.stop).toBeCloseTo(expectedStop);
   });
 
-  it("puts confirman hacia abajo", () => {
+  it("puts confirman hacia abajo, con objetivo por debajo del spot", () => {
     const cand = evaluateSwing({ ...base, type: "put" });
     expect(cand?.direction).toBe("down");
     expect(cand?.entryTrigger).toBeCloseTo(240 * 0.997);
+    expect(cand!.target).toBeGreaterThan(cand!.stop);
   });
 
   it("sin historial (hitRate null) no autopilotea", () => {
@@ -124,22 +152,28 @@ describe("evaluateSwing", () => {
   it("por debajo del umbral de acierto no autopilotea", () => {
     expect(evaluateSwing({ ...base, hitRate: MIN_SWING_HITRATE - 1 })).toBeNull();
   });
+
+  it("sin excursión histórica real (avgMfe/avgMae) no autopilotea", () => {
+    expect(evaluateSwing({ ...base, avgMfePct: null })).toBeNull();
+    expect(evaluateSwing({ ...base, avgMaePct: null })).toBeNull();
+  });
 });
 
 describe("buildAutoTradeInput", () => {
-  it("aplica la heurística de objetivo/stop/trailing sobre la prima de referencia", () => {
+  it("pasa el objetivo/stop/gatillo del candidato tal cual, sin recalcular", () => {
     const cand = evaluateIntraday({
-      ticker: "WULF", spot: 20, gexDirection: "up", gexConfidence: 80, lowLiquidity: false,
-      keySupport: null, keyResistance: { price: 22, strength: 50 },
-      contracts: [contract({ strike: 22, bid: 1, ask: 1 })],
+      ticker: "WULF", spot: 20, iv: 0.6, gexDirection: "up", gexConfidence: 80, kingStrike: 25,
+      lowLiquidity: false,
+      keySupport: { price: 18, strength: 40 }, keyResistance: { price: 22, strength: 50 },
+      contracts: [contract({ strike: 22, dte: 20 })],
     })!;
     const input = buildAutoTradeInput(cand);
     expect(input.source).toBe("auto");
-    expect(input.target).toBeCloseTo(1 * AUTO_TARGET_MULT);
-    expect(input.stop).toBeCloseTo(1 * AUTO_STOP_MULT);
-    expect(input.trailingStopPct).toBe(AUTO_TRAILING_PCT);
-    expect(input.contracts).toBe(1);
+    expect(input.target).toBe(cand.target);
+    expect(input.stop).toBe(cand.stop);
+    expect(input.entryTrigger).toBe(cand.entryTrigger);
     expect(input.path).toBe("intraday");
+    expect(input.contracts).toBe(1);
     expect(input.note).toMatch(/Intradía/);
   });
 });

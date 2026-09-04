@@ -19,18 +19,35 @@ const DIRECTION_COLOR: Record<Alert["direction"], number> = {
   down: 0xef4444,
 };
 
+function contractLabel(alert: Alert): string {
+  const side = alert.contractType === "call" ? "C" : "P";
+  return `$${alert.strike.toFixed(2)}${side} ${alert.expiration}`;
+}
+
+/**
+ * Todos los campos salen tal cual del trade que ya se creó — nada se redondea
+ * distinto ni se recalcula acá. Gatillo = nivel real del subyacente; objetivo/
+ * stop = precio de opción proyectado con Black-Scholes sobre niveles reales
+ * (ver autopilot.ts) — nunca un múltiplo inventado de la prima.
+ */
 export function buildDiscordPayload(alert: Alert): Record<string, unknown> {
   return {
     embeds: [
       {
-        title: `${alert.ticker} — ${DIRECTION_LABEL[alert.direction]}`,
+        title: `${alert.ticker} ${contractLabel(alert)} — ${DIRECTION_LABEL[alert.direction]}`,
         description: alert.reasoning,
         color: DIRECTION_COLOR[alert.direction],
         fields: [
           { name: "Vía", value: PATH_LABEL[alert.path], inline: true },
           { name: "Probabilidad", value: `${alert.probability}%`, inline: true },
+          { name: "Gatillo (subyacente)", value: `$${alert.entryTrigger.toFixed(2)}`, inline: true },
+          { name: "Compra (objetivo, prima)", value: `$${alert.target.toFixed(2)}`, inline: true },
+          { name: "Stop loss (prima)", value: `$${alert.stop.toFixed(2)}`, inline: true },
         ],
-        footer: { text: "Tito Metralleta · Piloto automático — SIMULACIÓN, no coloca órdenes reales" },
+        footer: {
+          text: "Tito Metralleta · Piloto automático — SIMULACIÓN, no coloca órdenes reales. " +
+            "Niveles calculados con datos reales (GEX/niveles o excursión histórica), no es recomendación.",
+        },
         timestamp: alert.createdAt,
       },
     ],
