@@ -31,45 +31,6 @@ export async function POST(request: Request) {
   }
 
   const now = new Date();
-
-  // TEMPORAL — verificación manual de punta a punta con mercado cerrado (sin
-  // movimiento real de precio no hay forma de esperar un cruce natural). Usa
-  // niveles REALES de la cadena/barras de hoy; solo pisa prevSpot/spot para
-  // forzar la comparación. No persiste nada. Quitar después de confirmar.
-  let debug: { ticker: string; prevSpot: number; spot: number } | null = null;
-  try {
-    const body = await request.json();
-    if (body?.debug?.ticker) debug = body.debug;
-  } catch { /* sin body, sigue el flujo normal */ }
-
-  if (debug) {
-    const { ticker, prevSpot, spot } = debug;
-    const chain = await fetchNearChain(ticker, { dteMax: 60, now });
-    const bars = await fetchDailyBars(ticker, 120).catch(() => []);
-    const rows = chain.contracts.map(toRow).filter((r) => r.strike > 0 && r.expiration);
-    const closes = bars.map((b) => b.close);
-    const gex = gexAnalysis({ rows, closes, spot: chain.spot ?? spot, now });
-    const chainLevels: ChainLevel[] = rows.map((r) => ({
-      strike: r.strike, contractType: r.contractType,
-      openInterest: r.openInterest, notionalValue: notionalValue(r.openInterest, r.strike),
-    }));
-    const gexLevels: GexLevel[] = gex.nodes.map((n) => ({ strike: n.strike, netGex: n.netGex }));
-    const lvlBars: LvlBar[] = bars.map((b) => ({ time: b.time, high: b.high, low: b.low, close: b.close }));
-    const levels = findLevels({ bars: lvlBars, spot: chain.spot ?? spot, chain: chainLevels, gex: gexLevels, now });
-    const sent: string[] = [];
-    const r = levels.keyResistance;
-    if (r && r.strength >= MIN_STRENGTH && prevSpot < r.price && spot >= r.price) {
-      await sendLevelCrossAlert({ ticker, kind: "resistencia", levelPrice: r.price, strength: r.strength, spot, now });
-      sent.push(`resistencia $${r.price} (fuerza ${r.strength})`);
-    }
-    const s = levels.keySupport;
-    if (s && s.strength >= MIN_STRENGTH && prevSpot > s.price && spot <= s.price) {
-      await sendLevelCrossAlert({ ticker, kind: "soporte", levelPrice: s.price, strength: s.strength, spot, now });
-      sent.push(`soporte $${s.price} (fuerza ${s.strength})`);
-    }
-    return Response.json({ debug: true, keySupport: s, keyResistance: r, sent });
-  }
-
   const tickers = await loadWatchedTickers();
   const result: { ticker: string; status: string }[] = [];
 
