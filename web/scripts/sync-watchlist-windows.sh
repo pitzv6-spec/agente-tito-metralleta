@@ -1,12 +1,12 @@
 #!/bin/bash
 # Drenador del buzón de salida hacia el watchlist de opciones de Robinhood.
 #
-# Variante Windows de sync-watchlist.sh: el original asume `launchd` (macOS) y
-# pega a http://localhost:3000 (servidor local de desarrollo). Esta corre bajo
-# Task Scheduler de Windows (ver sync-watchlist-task.ps1) y pega directo al
-# despliegue de Vercel, porque en esta máquina no hay servidor local corriendo
-# 24/7 — el buzón vive en Redis (lib/persist.ts), accesible solo vía la API
-# desplegada.
+# Variante Windows de sync-watchlist.sh: el original asume `launchd` (macOS),
+# `python3` y pega a http://localhost:3000 (servidor local de desarrollo).
+# Esta corre bajo Task Scheduler de Windows, usa `node` (python3 no está
+# realmente instalado en esta máquina — el "python3" del PATH es solo el
+# acceso directo de la Tienda) y pega directo al despliegue de Vercel, porque
+# el buzón vive en Redis (lib/persist.ts), accesible solo vía la API desplegada.
 #
 # Mismo reparto de trabajo que el original a propósito:
 #   - Lo determinista (leer la cola, topar a 10, confirmar, registrar) lo hace
@@ -17,10 +17,10 @@
 #     es incapaz de colocar una orden.
 #
 # Requiere que ANTES se haya corrido, en una terminal interactiva (no aquí):
-#   claude mcp add robinhood-trading --transport http https://agent.robinhood.com/mcp/trading
-# y completado el OAuth de Robinhood en el navegador. Sin eso, `claude -p`
-# falla al no encontrar las herramientas — se registra como error transitorio
-# y no se marca nada (se reintenta el siguiente pase, cada 15 min).
+#   claude mcp add robinhood-trading --transport http https://agent.robinhood.com/mcp/trading --scope user
+# y completado el OAuth de Robinhood (/mcp). Sin eso, `claude -p` falla al no
+# encontrar las herramientas — se registra como error transitorio y no se
+# marca nada (se reintenta el siguiente pase, cada 15 min).
 #
 # Si la cola está vacía NO se invoca al modelo: coste cero en los pases en vacío.
 
@@ -46,26 +46,30 @@ PENDING_JSON="$(curl -sf --max-time 15 "$API?broker=$BROKER" 2>/dev/null)" || {
 }
 
 # 2. Recortar al tope y quedarnos con lo que el modelo necesita ver.
-LOTE="$(printf '%s' "$PENDING_JSON" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-p = d.get("pending") or []
-tope = int(sys.argv[1])
-lote = p[:tope]
-print(json.dumps({"lote": lote, "total": len(p), "recortado": len(p) > tope}))
+LOTE="$(printf '%s' "$PENDING_JSON" | node -e '
+const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const p = d.pending || [];
+const tope = parseInt(process.argv[1], 10);
+const lote = p.slice(0, tope);
+process.stdout.write(JSON.stringify({ lote, total: p.length, recortado: p.length > tope }));
 ' "$MAX_POR_PASE")" || exit 0
 
-TOTAL="$(printf '%s' "$LOTE" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["lote"]))')"
+TOTAL="$(printf '%s' "$LOTE" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).lote.length)')"
 [ "$TOTAL" -eq 0 ] && exit 0   # cola vacía → ni se toca el modelo
 
-RECORTADO="$(printf '%s' "$LOTE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["total"] if d["recortado"] else 0)')"
+RECORTADO="$(printf '%s' "$LOTE" | node -e '
+const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+console.log(d.recortado ? d.total : 0);
+')"
 [ "$RECORTADO" != "0" ] && registrar "tope" "{\"pendientes\":$RECORTADO,\"empujados\":$MAX_POR_PASE}"
 
 # 3. Resolver y empujar. El modelo solo ve el lote y solo puede llamar a esas 3 tools.
+LOTE_JSON="$(printf '%s' "$LOTE" | node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(0,"utf8")).lote))')"
+
 PROMPT="Eres el drenador del watchlist de Tito. Empuja estos contratos al watchlist de
 opciones de Robinhood del usuario.
 
-Cola (JSON): $(printf '%s' "$LOTE" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["lote"]))')
+Cola (JSON): $LOTE_JSON
 
 Para cada ítem:
 1. Si le falta 'strike' o 'expiration', NO se puede resolver: va a 'failed' con motivo
@@ -91,30 +95,27 @@ SALIDA="$("$CLAUDE" -p "$PROMPT" \
   2>&1)"
 
 if [ $? -ne 0 ] || [ -z "$SALIDA" ]; then
-  registrar "error_agente" "$(printf '%s' "${SALIDA:-sin salida}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()[:400]))')"
+  registrar "error_agente" "$(printf '%s' "${SALIDA:-sin salida}" | node -e 'console.log(JSON.stringify(require("fs").readFileSync(0,"utf8").slice(0,400)))')"
   exit 0   # transitorio (incl. MCP de Robinhood aún no autorizado en esta terminal):
            # no se marca nada, se reintenta al siguiente pase
 fi
 
 # 4. Confirmar contra la API. Un fallo aquí es inocuo: el pase siguiente ve el contrato
 #    ya presente en Robinhood (get_option_watchlist) y solo marca, sin duplicar.
-RESULTADO="$(printf '%s' "$SALIDA" | python3 -c '
-import json, re, sys
-raw = sys.stdin.read()
-m = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.S) or re.search(r"(\{.*\})", raw, re.S)
-if not m:
-    print(json.dumps({"synced": [], "failed": []})); sys.exit(0)
-try:
-    d = json.loads(m.group(1))
-except Exception:
-    print(json.dumps({"synced": [], "failed": []})); sys.exit(0)
-print(json.dumps({
-    "synced": [k for k in (d.get("synced") or []) if isinstance(k, str)],
-    "failed": [f for f in (d.get("failed") or []) if isinstance(f, dict) and f.get("key")],
-}))
+RESULTADO="$(printf '%s' "$SALIDA" | node -e '
+const raw = require("fs").readFileSync(0, "utf8");
+const m = raw.match(/```json\s*(\{[\s\S]*?\})\s*```/) || raw.match(/(\{[\s\S]*\})/);
+let d = { synced: [], failed: [] };
+if (m) {
+  try { d = JSON.parse(m[1]); } catch { d = { synced: [], failed: [] }; }
+}
+console.log(JSON.stringify({
+  synced: (d.synced || []).filter((k) => typeof k === "string"),
+  failed: (d.failed || []).filter((f) => f && typeof f === "object" && f.key),
+}));
 ')"
 
-SYNCED="$(printf '%s' "$RESULTADO" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["synced"]))')"
+SYNCED="$(printf '%s' "$RESULTADO" | node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(0,"utf8")).synced))')"
 if [ "$SYNCED" != "[]" ]; then
   curl -sf --max-time 15 -X POST "$API" -H 'Content-Type: application/json' \
     -d "{\"broker\":\"$BROKER\",\"synced\":$SYNCED}" -o /dev/null
@@ -122,15 +123,16 @@ if [ "$SYNCED" != "[]" ]; then
 fi
 
 # Los fallidos se marcan de uno en uno porque cada uno lleva su propio motivo.
-printf '%s' "$RESULTADO" | python3 -c '
-import json, sys
-for f in json.load(sys.stdin)["failed"]:
-    print(json.dumps({"key": f["key"], "reason": f.get("reason") or "No se pudo resolver."}))
+printf '%s' "$RESULTADO" | node -e '
+const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+for (const f of d.failed) {
+  console.log(JSON.stringify({ key: f.key, reason: f.reason || "No se pudo resolver." }));
+}
 ' | while IFS= read -r linea; do
-  KEY="$(printf '%s' "$linea" | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
-  REASON="$(printf '%s' "$linea" | python3 -c 'import json,sys; print(json.load(sys.stdin)["reason"])')"
+  KEY="$(printf '%s' "$linea" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).key)')"
+  REASON="$(printf '%s' "$linea" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).reason)')"
   curl -sf --max-time 15 -X POST "$API" -H 'Content-Type: application/json' \
-    -d "$(python3 -c 'import json,sys; print(json.dumps({"broker":sys.argv[1],"failed":[sys.argv[2]],"reason":sys.argv[3]}))' "$BROKER" "$KEY" "$REASON")" \
+    -d "$(node -e 'console.log(JSON.stringify({broker:process.argv[1],failed:[process.argv[2]],reason:process.argv[3]}))' "$BROKER" "$KEY" "$REASON")" \
     -o /dev/null
   registrar "aparcado" "$linea"
 done
