@@ -142,6 +142,45 @@ export function buildMorningDigestPayload(
   };
 }
 
+/**
+ * Alerta de "lupa" — cruce real de un nivel (soporte/resistencia, ver
+ * lib/levels.ts) en un ticker que el usuario marcó para vigilar. Informativa:
+ * no crea trades ni implica que el piloto automático vaya a actuar.
+ */
+export function buildLevelCrossPayload(params: {
+  ticker: string;
+  kind: "resistencia" | "soporte";
+  levelPrice: number;
+  strength: number;
+  spot: number;
+  now: Date;
+}): Record<string, unknown> {
+  const { ticker, kind, levelPrice, strength, spot, now } = params;
+  const up = kind === "resistencia";
+  return {
+    embeds: [
+      {
+        title: `👁 ${ticker} — ${up ? "rompió resistencia" : "rompió soporte"} en $${levelPrice.toFixed(2)}`,
+        description:
+          `El precio cruzó un ${kind} real (fuerza ${strength}/100) que veníamos vigilando. ` +
+          `Precio actual: $${spot.toFixed(2)}.`,
+        color: up ? 0x22c55e : 0xef4444,
+        footer: {
+          text: "Tito Metralleta · Vigilancia de niveles — informativo, no es una señal del piloto automático ni consejo financiero.",
+        },
+        timestamp: now.toISOString(),
+      },
+    ],
+  };
+}
+
+export async function sendLevelCrossAlert(
+  params: Parameters<typeof buildLevelCrossPayload>[0],
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await postToDiscord(buildLevelCrossPayload(params), `la alerta de nivel de ${params.ticker}`, fetchImpl);
+}
+
 /** Envía el resumen matutino al webhook de Discord. */
 export async function sendMorningDigest(
   ideas: DigestIdea[],
