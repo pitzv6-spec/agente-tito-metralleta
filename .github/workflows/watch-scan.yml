@@ -16,7 +16,17 @@ name: Vigilancia de niveles — la "lupa"
 on:
   schedule:
     - cron: "*/15 13-21 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      debug_ticker:
+        description: "TEMPORAL: ticker para forzar un cruce de prueba (vacío = pase normal)"
+        required: false
+      debug_prev_spot:
+        description: "TEMPORAL: prevSpot falso"
+        required: false
+      debug_spot:
+        description: "TEMPORAL: spot falso"
+        required: false
 
 jobs:
   watch:
@@ -24,14 +34,24 @@ jobs:
     steps:
       - name: POST /api/watch/scan
         run: |
+          if [ -n "${DEBUG_TICKER}" ]; then
+            BODY="{\"debug\":{\"ticker\":\"${DEBUG_TICKER}\",\"prevSpot\":${DEBUG_PREV_SPOT},\"spot\":${DEBUG_SPOT}}}"
+          else
+            BODY="{}"
+          fi
           curl -sS -X POST "${TITO_DEPLOY_URL}/api/watch/scan" \
             -H "x-cron-secret: ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
             -w "\nHTTP %{http_code}\n" \
             --fail-with-body \
             --max-time 60
         env:
           TITO_DEPLOY_URL: ${{ secrets.TITO_DEPLOY_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DEBUG_TICKER: ${{ inputs.debug_ticker }}
+          DEBUG_PREV_SPOT: ${{ inputs.debug_prev_spot }}
+          DEBUG_SPOT: ${{ inputs.debug_spot }}
       - name: Avisar por Discord si la vigilancia en sí falló
         if: failure()
         run: |
