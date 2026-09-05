@@ -13,6 +13,7 @@ import { predictPro } from "@/lib/prediction";
 import { findLevels, type ChainLevel, type FlowLevel } from "@/lib/levels";
 import { int } from "./format";
 import HeaderBar from "./components/HeaderBar";
+import MarketContextBar from "./components/MarketContextBar";
 import AnalysisLoader from "./components/AnalysisLoader";
 import VeredictoCard from "./components/VeredictoCard";
 import EscenariosCard from "./components/EscenariosCard";
@@ -345,6 +346,8 @@ export default function Dashboard() {
     <>
       <HeaderBar ticker={ticker} company={company} busy={busy} onSearch={runSearch} />
       <main className="wrap page-stack">
+
+        <MarketContextBar />
 
         {!started && !busy && (
           <div className="card" style={{ alignItems: "center", padding: "48px 24px", textAlign: "center" }}>
