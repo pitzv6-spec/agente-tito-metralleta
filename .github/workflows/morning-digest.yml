@@ -1,0 +1,42 @@
+name: Resumen matutino — oportunidades reales
+
+# Dispara POST /api/digest/morning en el despliegue de Vercel antes de la
+# apertura del mercado. Ese endpoint escanea TODO el mercado con el mismo
+# filtro de calidad que /ideas (lib/risk.ts) y manda el resumen por Discord —
+# nunca inventa oportunidades: si el escaneo falla, avisa el motivo real.
+#
+# 13:00 UTC ≈ 9:00 ET en horario de verano (EDT); en horario de invierno (EST)
+# cae ~8:00 ET — sigue siendo antes de la apertura (9:30 ET), solo una hora
+# más temprano. Mismo trade-off que autopilot-scan.yml.
+#
+# Requiere los mismos secrets que autopilot-scan.yml (Settings → Secrets and
+# variables → Actions): TITO_DEPLOY_URL, CRON_SECRET, DISCORD_WEBHOOK_URL.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1-5" # solo días de semana
+  workflow_dispatch: {}
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/digest/morning
+        run: |
+          curl -sS -X POST "${TITO_DEPLOY_URL}/api/digest/morning" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            -w "\nHTTP %{http_code}\n" \
+            --fail-with-body \
+            --max-time 60
+        env:
+          TITO_DEPLOY_URL: ${{ secrets.TITO_DEPLOY_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      - name: Avisar por Discord si la petición en sí falló (deploy caído, etc.)
+        if: failure()
+        run: |
+          curl -sS -X POST "${DISCORD_WEBHOOK_URL}" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"⚠️ **Resumen matutino no se pudo generar** — /api/digest/morning no respondió. Revisa los logs en la pestaña Actions.\"}" \
+            -w "\nHTTP %{http_code}\n"
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

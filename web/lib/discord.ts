@@ -4,6 +4,18 @@
 
 import type { Alert } from "./alerts";
 
+/** Subconjunto de `Idea` (app/ideas/types.ts) que necesita el resumen matutino. */
+export interface DigestIdea {
+  ticker: string;
+  type: "call" | "put";
+  strike: number | null;
+  expiration: string | null;
+  assetPrice: number;
+  premium: number;
+  unusualScore: number;
+  history: { hitRate: number | null; resolved: number } | null;
+}
+
 const PATH_LABEL: Record<Alert["path"], string> = {
   intraday: "Intradía · GEX + niveles",
   swing: "Swing · flujo institucional",
@@ -54,8 +66,12 @@ export function buildDiscordPayload(alert: Alert): Record<string, unknown> {
   };
 }
 
-/** Envía la alerta al webhook de Discord. Nunca lanza — un fallo de red o webhook mal puesto no debe tumbar el escaneo. */
-export async function notifyDiscord(alert: Alert, fetchImpl: typeof fetch = fetch): Promise<void> {
+/** POST genérico al webhook de Discord. Nunca lanza — un fallo de red o webhook mal puesto no debe tumbar el escaneo. */
+async function postToDiscord(
+  payload: Record<string, unknown>,
+  errorLabel: string,
+  fetchImpl: typeof fetch,
+): Promise<void> {
   const url = process.env.DISCORD_WEBHOOK_URL;
   if (!url) return;
 
@@ -63,15 +79,76 @@ export async function notifyDiscord(alert: Alert, fetchImpl: typeof fetch = fetc
     const res = await fetchImpl(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildDiscordPayload(alert)),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      console.error(`[discord] webhook respondió ${res.status} para la alerta de ${alert.ticker}`);
+      console.error(`[discord] webhook respondió ${res.status} para ${errorLabel}`);
     }
   } catch (err) {
-    console.error(
-      `[discord] no se pudo enviar la alerta de ${alert.ticker}:`,
-      err instanceof Error ? err.message : err,
-    );
+    console.error(`[discord] no se pudo enviar ${errorLabel}:`, err instanceof Error ? err.message : err);
   }
+}
+
+/** Envía la alerta al webhook de Discord. Nunca lanza — un fallo de red o webhook mal puesto no debe tumbar el escaneo. */
+export async function notifyDiscord(alert: Alert, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postToDiscord(buildDiscordPayload(alert), `la alerta de ${alert.ticker}`, fetchImpl);
+}
+
+function ideaLine(idea: DigestIdea): string {
+  const side = idea.type === "call" ? "C" : "P";
+  const contract = idea.strike != null && idea.expiration ? `$${idea.strike.toFixed(2)}${side} ${idea.expiration}` : side;
+  const premiumM = (idea.premium / 1_000_000).toFixed(2);
+  const parts = [`**${idea.ticker}** ${contract} — premium $${premiumM}M, score ${idea.unusualScore}/100`];
+  if (idea.history && idea.history.hitRate != null) {
+    parts.push(`acierto histórico ${idea.history.hitRate.toFixed(0)}% (${idea.history.resolved} casos)`);
+  } else {
+    parts.push("sin historial verificado");
+  }
+  return parts.join(" — ");
+}
+
+/**
+ * Resumen matutino: top ideas REALES del escaneo de todo el mercado (mismo
+ * filtro de calidad que /ideas — lib/risk.ts), nunca inventadas. Si `ideas`
+ * viene vacío por un error de escaneo, `scanError` explica por qué en vez de
+ * fingir "no hay oportunidades hoy".
+ */
+export function buildMorningDigestPayload(
+  ideas: DigestIdea[],
+  meta: { scanned: number; tickers: number },
+  scanError: string | null,
+  now: Date,
+): Record<string, unknown> {
+  const description = scanError
+    ? `⚠ No se pudo completar el escaneo: ${scanError}`
+    : ideas.length === 0
+      ? `Sin ideas que pasen el filtro de calidad hoy (se revisaron ${meta.scanned} operaciones en ${meta.tickers} tickers).`
+      : ideas.map(ideaLine).join("\n");
+
+  return {
+    embeds: [
+      {
+        title: "📋 Resumen matutino — oportunidades del mercado",
+        description,
+        color: scanError ? 0xef4444 : 0x3b82f6,
+        footer: {
+          text:
+            `Tito Metralleta · Escaneo real de flujo de opciones (${meta.scanned} operaciones, ` +
+            `${meta.tickers} tickers) — no es consejo financiero, no coloca órdenes.`,
+        },
+        timestamp: now.toISOString(),
+      },
+    ],
+  };
+}
+
+/** Envía el resumen matutino al webhook de Discord. */
+export async function sendMorningDigest(
+  ideas: DigestIdea[],
+  meta: { scanned: number; tickers: number },
+  scanError: string | null,
+  now: Date,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await postToDiscord(buildMorningDigestPayload(ideas, meta, scanError, now), "el resumen matutino", fetchImpl);
 }
