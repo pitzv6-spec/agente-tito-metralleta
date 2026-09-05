@@ -17,6 +17,7 @@
 import { createAlert } from "@/lib/alerts";
 import { isAuthorized } from "@/lib/cronAuth";
 import { appendAlert } from "@/lib/alertsStore";
+import { kvGet, kvSet } from "@/lib/kv";
 import {
   buildAutoTradeInput,
   evaluateIntraday,
@@ -76,9 +77,26 @@ async function batched<T, R>(items: T[], size: number, fn: (item: T) => Promise<
   return out;
 }
 
+// El botón "Escanear ahora" de la UI no puede llevar CRON_SECRET (es del navegador,
+// cualquiera vería el valor). En vez de exponer el secreto o dejar el endpoint
+// abierto sin más, una llamada sin el header pasa por un límite de frecuencia
+// propio: Mis Trades es compartido por todos los que usan la app, así que un botón
+// sin freno podría llenarlo de ruido si alguien lo golpea en bucle.
+const MANUAL_SCAN_COOLDOWN_MS = 5 * 60 * 1000;
+const MANUAL_SCAN_KEY = "autopilot:last-manual-scan";
+
 export async function POST(request: Request) {
-  if (!isAuthorized(request.headers.get("x-cron-secret"), process.env.CRON_SECRET)) {
-    return Response.json({ error: "No autorizado." }, { status: 401 });
+  const isCron = isAuthorized(request.headers.get("x-cron-secret"), process.env.CRON_SECRET);
+  if (!isCron) {
+    const last = await kvGet<string>(MANUAL_SCAN_KEY).catch(() => null);
+    if (last && Date.now() - Date.parse(last) < MANUAL_SCAN_COOLDOWN_MS) {
+      const waitSec = Math.ceil((MANUAL_SCAN_COOLDOWN_MS - (Date.now() - Date.parse(last))) / 1000);
+      return Response.json(
+        { error: `Espera ${waitSec}s antes de volver a escanear manualmente.` },
+        { status: 429 },
+      );
+    }
+    await kvSet(MANUAL_SCAN_KEY, new Date().toISOString()).catch(() => null);
   }
 
   const now = new Date();
