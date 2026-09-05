@@ -2,11 +2,12 @@
 // de data/trades/{TICKER}.json, que es el backtest de flows de validation.ts; nombre
 // de carpeta distinto a propósito para no pisarse). Solo servidor.
 
-import { promises as fs } from "fs";
 import path from "path";
 import type { PaperTrade } from "./paperTrades";
+import { loadJson, saveJson } from "./persist";
 
 const DATA_FILE = path.join(process.cwd(), "data", "papertrades", "trades.json");
+const KEY = "papertrades";
 
 interface StoredFile {
   updatedAt: string;
@@ -14,19 +15,13 @@ interface StoredFile {
 }
 
 export async function loadAllTrades(): Promise<PaperTrade[]> {
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    const parsed = JSON.parse(raw) as StoredFile;
-    return Array.isArray(parsed.trades) ? parsed.trades : [];
-  } catch {
-    return [];
-  }
+  const parsed = await loadJson<StoredFile>(DATA_FILE, KEY);
+  return parsed && Array.isArray(parsed.trades) ? parsed.trades : [];
 }
 
 async function saveAllTrades(trades: PaperTrade[]): Promise<void> {
   const payload: StoredFile = { updatedAt: new Date().toISOString(), trades };
-  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-  await fs.writeFile(DATA_FILE, JSON.stringify(payload, null, 2), "utf8");
+  await saveJson(DATA_FILE, KEY, payload);
 }
 
 /** Inserta o reemplaza (por id) y persiste. Devuelve la lista completa ya guardada. */
