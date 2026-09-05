@@ -5,9 +5,10 @@ name: Piloto automático — escaneo periódico
 # tanto en horario de verano como de invierno; correr algo fuera de ventana
 # los días de mercado cerrado no hace daño, solo un escaneo de más).
 #
-# Requiere dos secrets en este repo (Settings → Secrets and variables → Actions):
-#   TITO_DEPLOY_URL  → ej. https://tu-proyecto.vercel.app
-#   CRON_SECRET      → el mismo valor que CRON_SECRET en las env vars de Vercel
+# Requiere tres secrets en este repo (Settings → Secrets and variables → Actions):
+#   TITO_DEPLOY_URL     → ej. https://tu-proyecto.vercel.app
+#   CRON_SECRET         → el mismo valor que CRON_SECRET en las env vars de Vercel
+#   DISCORD_WEBHOOK_URL → mismo valor que en web/.env.local (avisa si el scan falla)
 
 on:
   schedule:
@@ -27,3 +28,12 @@ jobs:
         env:
           TITO_DEPLOY_URL: ${{ secrets.TITO_DEPLOY_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      - name: Avisar por Discord si el escaneo falló
+        if: failure()
+        run: |
+          curl -sS -X POST "${DISCORD_WEBHOOK_URL}" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"⚠️ **Piloto automático falló** — /api/autopilot/scan devolvió error en la corrida de $(date -u +%H:%M) UTC. Revisa los logs en la pestaña Actions.\"}" \
+            -w "\nHTTP %{http_code}\n"
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
