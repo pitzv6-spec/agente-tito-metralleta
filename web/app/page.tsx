@@ -26,6 +26,7 @@ import PredictionCard from "./components/PredictionCard";
 import ActivityCard from "./components/ActivityCard";
 import MoneyFlowCard from "./components/MoneyFlowCard";
 import NewsCard from "./components/NewsCard";
+import SectorCard from "./components/SectorCard";
 import LevelsCard from "./components/LevelsCard";
 import ProWallsCard from "./components/ProWallsCard";
 import GexHeatmapCard from "./components/GexHeatmapCard";
@@ -452,6 +453,7 @@ export default function Dashboard() {
               </div>
             )}
             {!levels && <NewsCard ticker={ticker} company={company} callPct={callPct} />}
+            <SectorCard ticker={ticker} />
 
             {structure && <ProWallsCard ticker={ticker} structure={structure} gex={gex} horizonDays={horizonDays} levels={levels} />}
 
