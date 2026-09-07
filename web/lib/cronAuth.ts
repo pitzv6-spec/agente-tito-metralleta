@@ -10,3 +10,13 @@ export function isAuthorized(headerValue: string | null, secret: string | undefi
   if (!secret) return true;
   return headerValue === secret;
 }
+
+/**
+ * Vercel Cron Jobs (vercel.json `crons`) invocan por GET y mandan el secret
+ * en `Authorization: Bearer <CRON_SECRET>` — no dejan mandar headers propios
+ * como `x-cron-secret`. Mismo secret, formato distinto.
+ */
+export function isVercelCronAuthorized(authHeader: string | null, secret: string | undefined): boolean {
+  if (!secret) return true;
+  return authHeader === `Bearer ${secret}`;
+}

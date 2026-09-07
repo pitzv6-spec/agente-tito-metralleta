@@ -12,10 +12,16 @@ name: Vigilancia de niveles — la "lupa"
 # Mismo horario que autopilot-scan.yml (13:00-21:45 UTC cubre 9:30-16:00 ET
 # en verano e invierno). Requiere los mismos secrets: TITO_DEPLOY_URL,
 # CRON_SECRET.
+#
+# Minutos 7/22/37/52 en vez de */15 (0/15/30/45) a propósito: el minuto :00
+# es el más saturado de TODA la cola de cron de GitHub Actions (recomendación
+# oficial de GitHub) — en este repo (fork público, poca actividad) medimos
+# corridas retrasadas 2-3h+ y ventanas enteras saltadas. No lo elimina, pero
+# ayuda. Ver la nota más larga en morning-digest.yml.
 
 on:
   schedule:
-    - cron: "*/15 13-21 * * 1-5"
+    - cron: "7,22,37,52 13-21 * * 1-5"
   workflow_dispatch: {}
 
 jobs:

@@ -11,7 +11,10 @@ name: Chequeo diario — cookie de MarketSnack
 
 on:
   schedule:
-    - cron: "0 13 * * *" # 13:00 UTC ≈ 9:00 ET, antes de la apertura del mercado
+    # :13 en vez de :00 — el minuto :00 es el más saturado de la cola de cron
+    # de GitHub Actions (recomendación oficial de GitHub); medimos esta misma
+    # corrida llegando 2-3h tarde con `0 13 * * *`. Ver morning-digest.yml.
+    - cron: "13 13 * * *" # ~13:00 UTC ≈ 9:00 ET, antes de la apertura del mercado
   workflow_dispatch: {}
 
 jobs:

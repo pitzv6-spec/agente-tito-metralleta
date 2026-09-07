@@ -9,10 +9,16 @@ name: Piloto automático — escaneo periódico
 #   TITO_DEPLOY_URL     → ej. https://tu-proyecto.vercel.app
 #   CRON_SECRET         → el mismo valor que CRON_SECRET en las env vars de Vercel
 #   DISCORD_WEBHOOK_URL → mismo valor que en web/.env.local (avisa si el scan falla)
+#
+# Minutos 7/22/37/52 en vez de */15 (0/15/30/45) a propósito: el minuto :00
+# es el más saturado de TODA la cola de cron de GitHub Actions (recomendación
+# oficial de GitHub) — en este repo (fork público, poca actividad) medimos
+# corridas retrasadas 2-3h+ y ventanas enteras saltadas. No lo elimina, pero
+# ayuda. Ver la nota más larga en morning-digest.yml.
 
 on:
   schedule:
-    - cron: "*/15 13-21 * * 1-5"
+    - cron: "7,22,37,52 13-21 * * 1-5"
   workflow_dispatch: {} # permite dispararlo a mano desde la pestaña Actions
 
 jobs:

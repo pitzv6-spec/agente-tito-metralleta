@@ -5,16 +5,19 @@ name: Resumen matutino — oportunidades reales
 # filtro de calidad que /ideas (lib/risk.ts) y manda el resumen por Discord —
 # nunca inventa oportunidades: si el escaneo falla, avisa el motivo real.
 #
-# 13:00 UTC ≈ 9:00 ET en horario de verano (EDT); en horario de invierno (EST)
-# cae ~8:00 ET — sigue siendo antes de la apertura (9:30 ET), solo una hora
-# más temprano. Mismo trade-off que autopilot-scan.yml.
+# SOLO disparo manual aquí (workflow_dispatch) — el disparo diario real vive
+# en vercel.json (Vercel Cron Jobs), NO en el `schedule:` de este workflow.
+# Comprobado (sep 2026): el scheduler de GitHub Actions en este repo (fork
+# público, poca actividad) retrasa los cron 2-3h+ e incluso salta ventanas
+# enteras (autopilot-scan.yml, cron cada 15 min en horario de mercado, tuvo
+# un solo día con 4 corridas reales en vez de ~32, la última fuera de la
+# ventana declarada) — por eso el resumen de las 9am nunca llegaba. Vercel
+# Cron corre en la infraestructura de Vercel, no en la cola de Actions.
 #
 # Requiere los mismos secrets que autopilot-scan.yml (Settings → Secrets and
 # variables → Actions): TITO_DEPLOY_URL, CRON_SECRET, DISCORD_WEBHOOK_URL.
 
 on:
-  schedule:
-    - cron: "0 13 * * 1-5" # solo días de semana
   workflow_dispatch: {}
 
 jobs:

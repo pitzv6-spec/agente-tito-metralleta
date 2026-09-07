@@ -8,7 +8,7 @@
 //
 // Nunca crea trades ni coloca órdenes — es puramente informativo.
 
-import { isAuthorized } from "@/lib/cronAuth";
+import { isAuthorized, isVercelCronAuthorized } from "@/lib/cronAuth";
 import { sendMorningDigest, type DigestIdea } from "@/lib/discord";
 import { classifyFlow, type FlowRow } from "@/lib/flow";
 import { fetchDailyBars } from "@/lib/massive";
@@ -43,8 +43,11 @@ function dedupeByContract(rows: FlowRow[]): FlowRow[] {
   return [...best.values()];
 }
 
-export async function POST(request: Request) {
-  if (!isAuthorized(request.headers.get("x-cron-secret"), process.env.CRON_SECRET)) {
+async function handle(request: Request) {
+  const authorized =
+    isAuthorized(request.headers.get("x-cron-secret"), process.env.CRON_SECRET) ||
+    isVercelCronAuthorized(request.headers.get("authorization"), process.env.CRON_SECRET);
+  if (!authorized) {
     return Response.json({ error: "No autorizado." }, { status: 401 });
   }
 
@@ -95,3 +98,9 @@ export async function POST(request: Request) {
     return Response.json({ sent: true, ideas: 0, error: message }, { status: 200 });
   }
 }
+
+// POST: GitHub Actions / disparo manual (header x-cron-secret).
+// GET: Vercel Cron (vercel.json) — Vercel solo invoca por GET y manda el
+// secret como `Authorization: Bearer`, sin dejar mandar headers propios.
+export const POST = handle;
+export const GET = handle;
